@@ -40,7 +40,7 @@ class GeminiClient {
      * Initialize the Gemini client
      */
     initialize(config = {}) {
-        this.apiKey = config.apiKey || 'AIzaSyBVWcXY08OpDHh4N-RHPE7M0yO6-Ha8-CY';
+        this.apiKey = config.apiKey || '<YOUR API KEY HEAR>';
         this.model = config.model || this.model;
         this.defaultConfig = { ...this.defaultConfig, ...config.defaultConfig };
         
