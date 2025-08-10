@@ -1,0 +1,75 @@
+{
+  "name": "vsx",
+  "displayName": "VSX",
+  "description": "vibecode",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.103.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vsx.helloWorld",
+        "title": "Hello World"
+      },
+      {
+        "command": "vsx.openChatPanel",
+        "title": "Open Chat Panel",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "vsx.testConnection",
+        "title": "Test AI Connection",
+        "icon": "$(debug-disconnect)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vsxSidebar",
+          "title": "VSX",
+          "icon": "resources/vsx.svg"
+        }
+      ]
+    },
+    "views": {
+      "vsxSidebar": [
+        {
+          "id": "vsxView",
+          "icon": "resources/vsx.svg",
+          "name": "VSX View"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "vsx.openChatPanel",
+          "when": "view == vsxView",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.102.0",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.32.0",
+    "webpack": "^5.101.0",
+    "webpack-cli": "^6.0.1"
+  }
+}
