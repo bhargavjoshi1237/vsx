@@ -4,7 +4,7 @@ VSX is an intelligent AI assistant extension for Visual Studio Code that provide
 
 ## Features
 
-### 🤖 Ask Mode
+###  Ask Mode
 - **Contextual Q&A**: Get answers to coding questions without file modifications
 - **Code Examples**: Receive code snippets with `...existing code...` placeholders
 - **Best Practices**: Learn about coding patterns and recommendations

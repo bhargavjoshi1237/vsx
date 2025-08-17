@@ -1005,7 +1005,7 @@ function getChatPanelHTML() {
             
             <div class="messages-container" id="messagesArea">
                 <div class="welcome-state">
-                    <div class="welcome-icon">🤖</div>
+                     
                     <div class="welcome-title">Welcome to VSX AI Assistant</div>
                     <div class="welcome-subtitle">
                         I'm here to help you with coding, debugging, and development tasks. 
@@ -1047,7 +1047,7 @@ function getChatPanelHTML() {
                     ></textarea>
                     <div class="input-actions">
                         <button class="send-button" id="sendButton">
-                            <span>→</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24"><!-- Icon from Google Material Icons by Material Design Authors - https://github.com/material-icons/material-icons/blob/master/LICENSE --><path fill="currentColor" d="M2.01 21L23 12L2.01 3L2 10l15 2l-15 2z"/></svg>
                         </button>
                     </div>
                 </div>
@@ -1241,7 +1241,7 @@ function getChatPanelHTML() {
             
             elements.messagesArea.innerHTML = \`
                 <div class="welcome-state">
-                    <div class="welcome-icon">🤖</div>
+                    
                     <div class="welcome-title">Welcome to VSX AI Assistant</div>
                     <div class="welcome-subtitle">
                         I'm here to help you with coding, debugging, and development tasks. 
@@ -1274,11 +1274,6 @@ function getChatPanelHTML() {
             
             const message = elements.chatInput.value.trim();
             if (!message) return;
-
-            addMessage({
-                role: 'user',
-                content: message
-            });
 
             const contextFilesList = Array.from(contextFiles);
 
@@ -1545,6 +1540,8 @@ function getChatPanelHTML() {
                     break;
                 case 'clearMessages':
                     clearMessages();
+                    // Also clear in-memory chat history if maintained
+                    // chatHistory = [];
                     break;
                 case 'showTyping':
                     showTyping();
@@ -1553,7 +1550,9 @@ function getChatPanelHTML() {
                     hideTyping();
                     break;
                 case 'updateFileList':
+                    // Update availableFiles and render file list in sidebar
                     updateFileList(message.files);
+                    renderFileList();
                     break;
                 case 'contextFilesUpdated':
                     log('Context files updated after LLM changes');
@@ -1569,7 +1568,7 @@ function getChatPanelHTML() {
             
             setupEventListeners();
             
-            // Request workspace files
+            // Request workspace files from extension backend
             vscode.postMessage({ command: 'getWorkspaceFiles' });
             
             // Set up message listener
@@ -1591,3 +1590,5 @@ function getChatPanelHTML() {
 }
 
 module.exports = { getChatPanelHTML };
+
+

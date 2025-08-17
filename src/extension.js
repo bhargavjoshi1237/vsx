@@ -1,38 +1,30 @@
 const vscode = require("vscode");
-
-// Import core components
-const { AIEngine } = require("./core/engine");
-const { TaskPlanner } = require("./core/planner");
-const { ExecutionEngine } = require("./core/executor");
-const { ContextManager } = require("./core/context-manager");
+const path = require("path");
+const fs = require("fs");
 const { GeminiClient } = require("./llm/gemini-client");
-const { PromptManager } = require("./llm/prompt-manager");
-const { TokenOptimizer } = require("./llm/token-optimizer");
-const { ToolManager } = require("./tools/tool-manager");
 const { getChatPanelHTML } = require("./ui/chat-panel");
+const { processUserMessage, getWorkspaceFiles, getFileContent } = require("./llm/message-wrapper");
+const { decodeLLMResponse } = require("./llm/llm-response-decoder");
+const { FileEditor } = require("./core/file-editor");
+const fileEditor = new FileEditor();
 
 let chatPanel = null;
-let aiEngine = null;
+let geminiClient = null;
+let chatHistory = [];
+let chatId = "chat_" + Date.now();
 
 async function activate(context) {
   console.log("VSX Extension activating...");
 
   try {
-    // Initialize all components
-    await initializeAIEngine();
-
+    await initializeLLM();
     vscode.window.showInformationMessage("VSX AI Assistant is ready!");
-
-    // Register commands
     registerCommands(context);
 
-    // Setup tree view
     const treeDataProvider = new VscodeApiTreeDataProvider();
     vscode.window.registerTreeDataProvider("vsxView", treeDataProvider);
 
-    // Auto-open chat panel
     vscode.commands.executeCommand("vsx.openChatPanel");
-
     console.log("VSX Extension activated successfully");
   } catch (error) {
     console.error("Failed to activate VSX Extension:", error);
@@ -42,40 +34,12 @@ async function activate(context) {
   }
 }
 
-async function initializeAIEngine() {
-  // Initialize components
-  const geminiClient = new GeminiClient();
-  const promptManager = new PromptManager();
-  const tokenOptimizer = new TokenOptimizer();
-  const toolManager = new ToolManager();
-  const contextManager = new ContextManager();
-  const planner = new TaskPlanner();
-  const executor = new ExecutionEngine();
-
-  // Initialize each component
+async function initializeLLM() {
+  geminiClient = new GeminiClient();
   geminiClient.initialize();
-  promptManager.initialize();
-  tokenOptimizer.initialize();
-  toolManager.initialize();
-  contextManager.initialize({ storage: null }); // No persistent storage for now
-  planner.initialize({ llmClient: geminiClient, toolManager });
-  executor.initialize({ toolManager, contextManager, planner });
-
-  // Create and initialize AI engine
-  aiEngine = new AIEngine();
-  await aiEngine.initialize({
-    llmClient: geminiClient,
-    promptManager,
-    tokenOptimizer,
-    toolManager,
-    contextManager,
-    planner,
-    executor,
-  });
 }
 
 function registerCommands(context) {
-  // Hello World command
   const helloWorldDisposable = vscode.commands.registerCommand(
     "vsx.helloWorld",
     () => {
@@ -83,7 +47,6 @@ function registerCommands(context) {
     }
   );
 
-  // Open chat panel command
   const openChatPanelDisposable = vscode.commands.registerCommand(
     "vsx.openChatPanel",
     () => {
@@ -91,35 +54,9 @@ function registerCommands(context) {
     }
   );
 
-  // Test AI connection command
-  const testConnectionDisposable = vscode.commands.registerCommand(
-    "vsx.testConnection",
-    async () => {
-      try {
-        const result = await aiEngine.llmClient.testConnection();
-        if (result.success) {
-          vscode.window.showInformationMessage(
-            `AI connection successful! Model: ${result.model}${
-              result.isMock ? " (Mock)" : ""
-            }`
-          );
-        } else {
-          vscode.window.showErrorMessage(
-            `AI connection failed: ${result.error}`
-          );
-        }
-      } catch (error) {
-        vscode.window.showErrorMessage(
-          `Connection test failed: ${error.message}`
-        );
-      }
-    }
-  );
-
   context.subscriptions.push(
     helloWorldDisposable,
-    openChatPanelDisposable,
-    testConnectionDisposable
+    openChatPanelDisposable
   );
 }
 
@@ -141,30 +78,44 @@ function openChatPanel(context) {
 
   chatPanel.webview.html = getChatPanelHTML();
 
-  // Handle messages from the webview
   chatPanel.webview.onDidReceiveMessage(
     async (message) => {
       switch (message.command) {
         case "sendMessage":
-          await handleChatMessage(message.message, message.model || 'gemini-2.0-flash-exp', message.contextFiles);
+          // Pass contextFiles and selected mode from webview to handleChatMessage
+          await handleChatMessage(
+            message.message,
+            message.model || "gemini-2.0-flash-exp",
+            message.contextFiles || [],
+            message.mode || "ask"
+          );
           break;
         case "clearChat":
-          await handleClearChat();
+          handleClearChat();
           break;
-        case "changeModel":
-          await handleModelChange(message.model);
+        case "newChat":
+          handleNewChat();
           break;
         case "getWorkspaceFiles":
-          await handleGetWorkspaceFiles();
+          // List files in workspace and send to webview
+          try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (workspaceFolder) {
+              const files = getWorkspaceFiles(workspaceFolder);
+              chatPanel.webview.postMessage({ command: "updateFileList", files });
+            } else {
+              chatPanel.webview.postMessage({ command: "updateFileList", files: [] });
+            }
+          } catch (err) {
+            chatPanel.webview.postMessage({ command: "updateFileList", files: [] });
+          }
           break;
-
       }
     },
     undefined,
     context.subscriptions
   );
 
-  // Reset panel when disposed
   chatPanel.onDidDispose(
     () => {
       chatPanel = null;
@@ -174,93 +125,196 @@ function openChatPanel(context) {
   );
 }
 
-async function handleChatMessage(userMessage, selectedModel, contextFiles = []) {
-  if (!chatPanel || !aiEngine) return;
-
-  const startTime = Date.now();
+async function handleChatMessage(userMessage, selectedModel, contextFilesList = [], selectedMode = "ask") {
+  if (!chatPanel || !geminiClient) return;
 
   try {
-    // Send user message to webview immediately
+    chatHistory.push({
+      role: "user",
+      content: userMessage,
+      mode: selectedMode,
+      timestamp: new Date().toLocaleTimeString(),
+    });
+
     chatPanel.webview.postMessage({
       command: "addMessage",
       message: {
         role: "user",
         content: userMessage,
+        metadata: { mode: selectedMode },
         timestamp: new Date().toLocaleTimeString(),
       },
     });
 
-    // Show typing indicator
     chatPanel.webview.postMessage({
       command: "showTyping",
     });
 
-    // Get workspace context
-    const workspaceContext = await getWorkspaceContext();
-
-    // Add context files content if provided
-    if (contextFiles && contextFiles.length > 0) {
-      workspaceContext.contextFiles = await getContextFilesContent(contextFiles);
-      console.log(`Added ${workspaceContext.contextFiles.length} context files to request`);
+    if (selectedModel && geminiClient) {
+      geminiClient.model = selectedModel;
     }
 
-    // Update AI engine model if provided
-    if (selectedModel && aiEngine.llmClient) {
-      aiEngine.llmClient.model = selectedModel;
-      console.log(`Using model: ${selectedModel}`);
+    // Read selected files and send as context
+    let contextFiles = [];
+    if (Array.isArray(contextFilesList) && contextFilesList.length > 0) {
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      for (const fileName of contextFilesList) {
+        try {
+          const filePath = workspaceFolder ? require("path").join(workspaceFolder, fileName) : fileName;
+          contextFiles.push(getFileContent(filePath));
+        } catch (err) {
+          // Ignore unreadable files
+        }
+      }
     }
 
-    // Process the request through AI engine
-    const response = await aiEngine.processRequest(
+    const response = await processUserMessage({
       userMessage,
-      workspaceContext
-    );
+      workspaceContext: {},
+      aiEngine: geminiClient,
+      mode: selectedMode,
+      chatHistory,
+      contextFiles
+    });
 
-    // Calculate processing time
-    const processingTime = Date.now() - startTime;
-
-    // Hide typing indicator
     chatPanel.webview.postMessage({
       command: "hideTyping",
     });
 
-    // Send AI response to webview with enhanced metadata
+    // --- File edit handling (Copilot style) ---
+    const llmContent = await decodeLLMResponse({ response });
+    const codeBlockRegex = /```[\w]*\n\/\/ filepath: ([^\n]+)\n([\s\S]*?)```/g;
+    let match, fileEditResults = [];
+    while ((match = codeBlockRegex.exec(llmContent)) !== null) {
+      const filePath = match[1].trim();
+      const newContent = match[2];
+
+      try {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+
+        // Resolve target FS path and create VSCode URI correctly for absolute or relative paths
+        let targetFsPath;
+        if (workspaceFolder) {
+          if (path.isAbsolute(filePath)) {
+            targetFsPath = path.normalize(filePath);
+          } else {
+            targetFsPath = path.normalize(path.join(workspaceFolder.uri.fsPath, filePath));
+          }
+        } else {
+          // No workspace folder: treat as absolute or relative to process.cwd
+          targetFsPath = path.isAbsolute(filePath)
+            ? path.normalize(filePath)
+            : path.normalize(path.join(process.cwd(), filePath));
+        }
+
+        const fileUri = vscode.Uri.file(targetFsPath);
+
+        // Ensure directory exists when creating new files
+        const fileExists = fs.existsSync(targetFsPath);
+
+        if (fileExists) {
+          // Update existing file
+          const document = await vscode.workspace.openTextDocument(fileUri);
+          const workspaceEdit = new vscode.WorkspaceEdit();
+          const fullRange = new vscode.Range(
+            document.positionAt(0),
+            document.positionAt(document.getText().length)
+          );
+
+          // Handle placeholder tokens for preserving existing code
+          let finalContent = newContent;
+          if (finalContent && typeof finalContent === "string" && /\.{3}existing code\.{3}/.test(finalContent)) {
+            const originalText = document.getText();
+            finalContent = finalContent.replace(/\/\*\s*\.{3}existing code\.{3}\s*\*\//g, originalText);
+            finalContent = finalContent.replace(/\/\/\s*\.{3}existing code\.{3}/g, originalText);
+            finalContent = finalContent.replace(/\.{3}existing code\.{3}/g, originalText);
+          }
+
+          workspaceEdit.replace(fileUri, fullRange, finalContent);
+          const success = await vscode.workspace.applyEdit(workspaceEdit);
+          if (success) await document.save();
+
+          fileEditResults.push({
+            filePath: targetFsPath,
+            success,
+            message: success ? "File updated successfully" : "Failed to update file"
+          });
+        } else {
+          // Create new file and write content using vscode FS so VS Code picks it up
+          const dir = path.dirname(targetFsPath);
+          fs.mkdirSync(dir, { recursive: true });
+
+          // Remove placeholder tokens for new files
+          let finalContent = newContent
+            .replace(/\/\*\s*\.{3}existing code\.{3}\s*\*\//g, "")
+            .replace(/\/\/\s*\.{3}existing code\.{3}/g, "")
+            .replace(/\.{3}existing code\.{3}/g, "")
+            .replace(/^\s+/, "")
+            .replace(/\s+$/, "");
+
+          const uint8array = Buffer.from(finalContent, "utf8");
+          await vscode.workspace.fs.writeFile(fileUri, uint8array);
+
+          // Optionally open and save (ensures file is registered in editors)
+          const document = await vscode.workspace.openTextDocument(fileUri);
+          await document.save();
+
+          fileEditResults.push({
+            filePath: targetFsPath,
+            success: true,
+            message: "File created successfully"
+          });
+        }
+      } catch (err) {
+        fileEditResults.push({
+          filePath,
+          success: false,
+          message: err.message
+        });
+      }
+    }
+
+    // Prepare Copilot-style summary for chat
+    let summary = llmContent;
+    if (fileEditResults.length > 0) {
+      summary = "";
+      for (const result of fileEditResults) {
+        summary += `📝 **File Edits Applied to \`${result.filePath}\`:**\n\n`;
+        summary += result.success
+          ? `✅ Successfully updated \`${result.filePath}\`\n`
+          : `❌ Failed to update \`${result.filePath}\`: ${result.message}\n`;
+      }
+    }
+
+    // --- FIX: usage extraction ---
+    const usage = response.usageMetadata || {};
+
     chatPanel.webview.postMessage({
       command: "addMessage",
       message: {
         role: "assistant",
-        content: response.content || response.message || JSON.stringify(response),
+        content: summary,
         timestamp: new Date().toLocaleTimeString(),
-        isFileEdit: response.isFileEdit || false,
-        fileEdits: response.fileEdits || null,
-        mode: response.mode || 'legacy',
+        isFileEdit: fileEditResults.length > 0,
+        fileEdits: fileEditResults,
         metadata: {
-          tokensUsed: response.usageMetadata?.totalTokenCount || 0,
-          promptTokens: response.usageMetadata?.promptTokenCount || 0,
-          responseTokens: response.usageMetadata?.candidatesTokenCount || 0,
-          model: aiEngine.llmClient.model,
-          processingTime: processingTime,
-          contextFilesCount: contextFiles ? contextFiles.length : 0,
-          isMockResponse: response.isMockResponse || false,
-          mode: response.mode || 'legacy'
+          model: geminiClient.model,
+          mode: selectedMode,
+          sentTokens: usage.promptTokenCount || 0,
+          receivedTokens: usage.candidatesTokenCount || 0,
+          totalTokens: usage.totalTokenCount || 0,
+          processingTime: response.processingTime || 0,
+          contextFilesCount: contextFiles.length
         },
       },
     });
-
-    // Refresh context files if the LLM made file changes
-    if (contextFiles && contextFiles.length > 0 && (response.isFileEdit || response.fileEdits)) {
-      console.log('LLM made file changes, refreshing context...');
-      await refreshContextFiles(contextFiles);
-    }
   } catch (error) {
     console.error("Error handling chat message:", error);
 
-    // Hide typing indicator
     chatPanel.webview.postMessage({
       command: "hideTyping",
     });
 
-    // Send error message to webview
     chatPanel.webview.postMessage({
       command: "addMessage",
       message: {
@@ -273,153 +327,24 @@ async function handleChatMessage(userMessage, selectedModel, contextFiles = []) 
   }
 }
 
-async function handleClearChat() {
+function handleClearChat() {
   if (!chatPanel) return;
-
   chatPanel.webview.postMessage({
     command: "clearMessages",
   });
+  chatHistory = [];
 }
 
-async function handleModelChange(newModel) {
-  if (!aiEngine) return;
-
-  try {
-    // Update the Gemini client with the new model
-    aiEngine.llmClient.model = newModel;
-    console.log(`Model changed to: ${newModel}`);
-
-    // Optionally test the new model
-    const testResult = await aiEngine.llmClient.testConnection();
-    if (testResult.success) {
-      console.log(`Model ${newModel} is working correctly`);
-    } else {
-      console.warn(`Model ${newModel} test failed:`, testResult.error);
-    }
-  } catch (error) {
-    console.error("Error changing model:", error);
-  }
-}
-
-async function getWorkspaceContext() {
-  const context = {
-    activeFiles: [],
-    projectPath: null,
-    userPreferences: {},
-  };
-
-  // Get workspace folder
-  const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (workspaceFolders && workspaceFolders.length > 0) {
-    context.projectPath = workspaceFolders[0].uri.fsPath;
-  }
-
-  // Get active editor info
-  const activeEditor = vscode.window.activeTextEditor;
-  if (activeEditor) {
-    const document = activeEditor.document;
-    context.activeFiles.push({
-      path: vscode.workspace.asRelativePath(document.uri),
-      language: document.languageId,
-      size: document.getText().length,
-      isDirty: document.isDirty,
-    });
-  }
-
-  return context;
-}
-
-async function getContextFilesContent(contextFiles) {
-  const filesContent = [];
-  
-  for (const filePath of contextFiles) {
-    try {
-      console.log(`Reading context file: ${filePath}`);
-      const result = await aiEngine.toolManager.executeTool('readFile', { filePath });
-      
-      if (result.success && result.result) {
-        // Preserve exact file content including blank lines
-        const originalContent = result.result.content || '';
-        
-        // Normalize line endings but preserve all blank lines
-        const normalizedContent = originalContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        
-        // Count lines properly including blank lines
-        const lines = normalizedContent.split('\n');
-        
-        const fileContent = {
-          path: filePath,
-          content: originalContent,
-          size: result.result.size || originalContent.length,
-          // Ensure blank lines are preserved with normalized line endings
-          formattedContent: normalizedContent,
-          lineCount: lines.length,
-          lastModified: Date.now(),
-          // Store individual lines for better processing
-          lines: lines
-        };
-        filesContent.push(fileContent);
-        console.log(`Successfully read ${filePath}: ${fileContent.size} bytes, ${fileContent.lineCount} lines`);
-      } else {
-        console.warn(`Failed to read context file ${filePath}:`, result.error || 'Unknown error');
-      }
-    } catch (error) {
-      console.error(`Exception reading context file ${filePath}:`, error);
-    }
-  }
-  
-  console.log(`Total context files loaded: ${filesContent.length}`);
-  return filesContent;
-}
-
-async function refreshContextFiles(contextFiles) {
-  // Refresh context files after LLM makes changes
-  if (contextFiles && contextFiles.length > 0) {
-    console.log('Refreshing context files after LLM response...');
-    const refreshedContent = await getContextFilesContent(contextFiles);
-    
-    // Send updated context to webview
-    if (chatPanel) {
-      chatPanel.webview.postMessage({
-        command: 'contextFilesUpdated',
-        files: refreshedContent
-      });
-    }
-    
-    return refreshedContent;
-  }
-  return [];
-}
-
-async function handleGetWorkspaceFiles() {
-  if (!chatPanel) return;
-  
-  try {
-    const result = await aiEngine.toolManager.executeTool('listFiles', { 
-      recursive: true,
-      pattern: '**/*.{js,ts,jsx,tsx,py,java,cpp,c,h,css,html,json,md,txt,yml,yaml}'
-    });
-    
-    if (result.success) {
-      const files = result.result.files
-        .filter(file => file.type === 'file')
-        .map(file => file.path)
-        .slice(0, 50); // Limit to 50 files for performance
-      
-      chatPanel.webview.postMessage({
-        command: 'updateFileList',
-        files: files
-      });
-    }
-  } catch (error) {
-    console.error('Failed to get workspace files:', error);
+function handleNewChat() {
+  chatId = "chat_" + Date.now();
+  chatHistory = [];
+  if (chatPanel) {
+    chatPanel.webview.postMessage({ command: "clearMessages" });
   }
 }
 
 function deactivate() {
-  if (aiEngine) {
-    aiEngine.cleanup();
-  }
+  // No cleanup needed for GeminiClient
 }
 
 module.exports = {
@@ -436,7 +361,6 @@ class VscodeApiTreeDataProvider {
     if (!element) {
       return [
         this._item("Open Chat Panel", "vsx.openChatPanel"),
-        this._item("Test AI Connection", "vsx.testConnection"),
       ];
     }
     return [];
@@ -449,9 +373,7 @@ class VscodeApiTreeDataProvider {
     );
     item.command = { command, title: label };
     item.iconPath = new vscode.ThemeIcon(
-      command === "vsx.openChatPanel"
-        ? "comment-discussion"
-        : "debug-disconnect"
+      "comment-discussion"
     );
     return item;
   }

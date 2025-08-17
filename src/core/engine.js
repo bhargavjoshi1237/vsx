@@ -418,22 +418,50 @@ Do NOT show the entire file content in your response. Only show the specific lin
   parseEditModeResponse(responseContent, context) {
     const fileEdits = [];
     
-    // Look for code blocks with filepath comments
-    const codeBlockRegex = /```[\w]*\n\/\/ filepath: ([^\n]+)\n([\s\S]*?)```/g;
+    // Accept either:
+    // ```lang
+    // // filepath: path/to/file.ext
+    // <content>
+    // ```
+    // OR
+    // ```lang
+    // // filename.ext
+    // <content>
+    // ```
+    const codeBlockRegex = /```[\w-]*\n(?:\/\/\s*filepath:\s*([^\n]+)|\/\/\s*([^\n]+))\n([\s\S]*?)```/g;
     let match;
     
     while ((match = codeBlockRegex.exec(responseContent)) !== null) {
-      const filePath = match[1].trim();
-      const content = match[2];
+      const rawPath = (match[1] || match[2] || '').trim();
+      const content = match[3] || '';
+      if (!rawPath) continue;
       
-      // Find the original file in context
-      const originalFile = context.contextFiles?.find(f => f.path === filePath);
+      // Try to find an exact match in context first
+      let originalFile = context.contextFiles?.find(f => f.path === rawPath);
+      
+      // Fallback: match by basename (handles LLM returning just 'test.jsx')
+      if (!originalFile && context.contextFiles && context.contextFiles.length > 0) {
+        const basename = rawPath.split(/[/\\]/).pop();
+        originalFile = context.contextFiles.find(f => {
+          const fbase = f.path.split(/[/\\]/).pop();
+          return fbase === basename;
+        });
+      }
+      
       if (originalFile) {
         fileEdits.push({
-          filePath,
+          filePath: originalFile.path,
           newContent: content,
           originalContent: originalFile.formattedContent || originalFile.content || '',
           hasChanges: content !== (originalFile.formattedContent || originalFile.content || '')
+        });
+      } else {
+        // If the file isn't part of provided context, still surface the edit so user can select/create the target
+        fileEdits.push({
+          filePath: rawPath,
+          newContent: content,
+          originalContent: '',
+          hasChanges: true
         });
       }
     }
@@ -465,14 +493,29 @@ Do NOT show the entire file content in your response. Only show the specific lin
       // Open the document
       const document = await vscode.workspace.openTextDocument(fileUri);
       
-      // Create workspace edit to replace entire file content
+      // Merge behavior: if LLM provided a snippet using the placeholder token,
+      // replace that token with the original file content instead of replacing whole file blindly.
+      const originalText = document.getText();
+      let finalContent = edit.newContent;
+
+      if (finalContent && typeof finalContent === 'string' && /\.{3}existing code\.{3}/.test(finalContent)) {
+        // Replace common comment-wrapped forms first to avoid leaving comment markers in place.
+        // Multi-line comment form: /* ...existing code... */
+        finalContent = finalContent.replace(/\/\*\s*\.{3}existing code\.{3}\s*\*\//g, originalText);
+        // Single-line comment form: // ...existing code...
+        finalContent = finalContent.replace(/\/\/\s*\.{3}existing code\.{3}/g, originalText);
+        // Bare token
+        finalContent = finalContent.replace(/\.{3}existing code\.{3}/g, originalText);
+      }
+
+      // Create workspace edit to replace entire file content with merged result
       const workspaceEdit = new vscode.WorkspaceEdit();
       const fullRange = new vscode.Range(
         document.positionAt(0),
         document.positionAt(document.getText().length)
       );
       
-      workspaceEdit.replace(fileUri, fullRange, edit.newContent);
+      workspaceEdit.replace(fileUri, fullRange, finalContent);
       
       // Apply the edit
       const success = await vscode.workspace.applyEdit(workspaceEdit);
