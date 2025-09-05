@@ -20,7 +20,17 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:vsx.helloWorld",
+    "onCommand:vsx.openChatPanel",
+    "onCommand:vsx.testConnection",
+    "onCommand:vsx.setApiKey",
+    "onCommand:vsx.clearApiKey",
+    "onCommand:vsx.setCerebrasApiKey",
+    "onCommand:vsx.clearCerebrasApiKey",
+    "onCommand:vsx.setNvidiaApiKey",
+    "onCommand:vsx.clearNvidiaApiKey"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
@@ -30,13 +40,40 @@
       },
       {
         "command": "vsx.openChatPanel",
-        "title": "Open Chat Panel",
-        "icon": "$(comment-discussion)"
+        "title": "VSX: Open Chat Panel"
       },
       {
         "command": "vsx.testConnection",
         "title": "Test AI Connection",
         "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "vsx.setApiKey",
+        "title": "VSX: Set API Key"
+      },
+      {
+        "command": "vsx.clearApiKey",
+        "title": "VSX: Clear API Key"
+      },
+      {
+        "command": "vsx.setCerebrasApiKey",
+        "title": "VSX: Set Cerebras API Key",
+        "category": "VSX"
+      },
+      {
+        "command": "vsx.clearCerebrasApiKey",
+        "title": "VSX: Clear Cerebras API Key",
+        "category": "VSX"
+      },
+      {
+        "command": "vsx.setNvidiaApiKey",
+        "title": "VSX: Set NVIDIA API Key",
+        "category": "VSX"
+      },
+      {
+        "command": "vsx.clearNvidiaApiKey",
+        "title": "VSX: Clear NVIDIA API Key",
+        "category": "VSX"
       }
     ],
     "viewsContainers": {
@@ -63,6 +100,20 @@
           "command": "vsx.openChatPanel",
           "when": "view == vsxView",
           "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "vsx.openChatPanel",
+          "when": "true"
+        },
+        {
+          "command": "vsx.setApiKey",
+          "when": "true"
+        },
+        {
+          "command": "vsx.clearApiKey",
+          "when": "true"
         }
       ]
     }

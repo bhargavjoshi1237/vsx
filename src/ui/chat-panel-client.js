@@ -65,9 +65,22 @@
 	    const debugInfo = [];
 	    if (metadata.mode) debugInfo.push(['Mode', metadata.mode.toUpperCase()]);
 	    if (metadata.model) debugInfo.push(['Model', metadata.model]);
-	    if (metadata.tokensUsed) debugInfo.push(['Tokens', metadata.tokensUsed]);
+
+	    // New: show token breakdown (prompt / completion / total) if available
+	    if (typeof metadata.promptTokens === 'number' || typeof metadata.completionTokens === 'number' || typeof metadata.tokensUsed === 'number') {
+	        if (typeof metadata.promptTokens === 'number') debugInfo.push(['Prompt Tokens', metadata.promptTokens]);
+	        if (typeof metadata.completionTokens === 'number') debugInfo.push(['Completion Tokens', metadata.completionTokens]);
+	        // total / tokensUsed fallback
+	        const total = (typeof metadata.tokensUsed === 'number') ? metadata.tokensUsed : metadata.totalTokens;
+	        if (typeof total === 'number') debugInfo.push(['Total Tokens', total]);
+	    } else if (metadata.tokensUsed) {
+	        // backward-compat: single tokensUsed field
+	        debugInfo.push(['Tokens', metadata.tokensUsed]);
+	    }
+
 	    if (metadata.processingTime) debugInfo.push(['Response Time', metadata.processingTime + 'ms']);
-	    if (metadata.contextFilesCount) debugInfo.push(['Context Files', metadata.contextFilesCount]);
+	    if (metadata.contextFilesCount !== undefined) debugInfo.push(['Context Files', metadata.contextFilesCount]);
+
 	    if (debugInfo.length === 0) return '';
 	    const debugItems = debugInfo.map(([label, value]) => `
 	        <div class="debug-item">
@@ -277,6 +290,50 @@
 	    elements.chatInput.style.height = Math.min(elements.chatInput.scrollHeight, 120) + 'px';
 	}
 
+	// New: expanded model list (value, label, description)
+	const MODEL_OPTIONS = [
+	    { value: 'gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash Exp', desc: 'Latest experimental model with enhanced capabilities' },
+	    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'High-performance model for complex reasoning' },
+	    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', desc: 'Balanced performance and speed' },
+	    { value: 'gemini-2.0-flash-lite', label: 'Gemini 2.0 Flash Lite', desc: 'Lightweight version for faster responses' },
+	    { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', desc: 'Optimized for speed and efficiency' },
+
+	    // Cerebras
+	    { value: 'cerebras-gpt-oss-120b', label: 'Cerebras GPT-OSS-120B', desc: 'Cerebras large open model (requires Cerebras API key)' },
+
+	    // Qwen family (these require provider support / keys)
+	    { value: 'qwen-3-235b-a22b-instruct-2507', label: 'Qwen-3-235B Instruct', desc: 'Qwen instruct model (requires Qwen API key)' },
+	    { value: 'qwen-3-235b-a22b-thinking-2507', label: 'Qwen-3-235B Thinking', desc: 'Qwen thinking variant (requires Qwen API key)' },
+	    { value: 'qwen-3-32b', label: 'Qwen-3-32B', desc: 'Qwen medium model' },
+	    { value: 'qwen-3-coder-480b', label: 'Qwen-3-Coder-480B', desc: 'Qwen coder model (coding tasks)' },
+
+	    // NVIDIA / DeepSeek examples
+	    { value: 'nvidia-deepseek-v3.1', label: 'NVIDIA deepseek-v3.1', desc: 'NVIDIA DeepSeek model (requires NVIDIA API key)' },
+	    { value: 'nvidia-deepseek-r1-0528', label: 'NVIDIA deepseek-r1-0528', desc: 'NVIDIA DeepSeek R1 model' },
+	    { value: 'nvidia-kimi-k2-instruct', label: 'NVIDIA Kimi K2 Instruct', desc: 'NVIDIA Kimi instruct model' }
+	];
+
+	// Populate the model <select> with options and titles (so user can see descriptions)
+	function populateModelOptions() {
+	    const sel = elements.modelSelect;
+	    if (!sel) return;
+	    sel.innerHTML = ''; // clear existing options
+	    MODEL_OPTIONS.forEach(opt => {
+	        const el = document.createElement('option');
+	        el.value = opt.value;
+	        el.textContent = opt.label;
+	        if (opt.desc) el.title = opt.desc;
+	        sel.appendChild(el);
+	    });
+	    // Reflect current selectedModel in UI
+	    try {
+	        sel.value = selectedModel;
+	    } catch (e) {
+	        // If current selectedModel not present, keep first option and update state
+	        selectedModel = sel.options[0]?.value || selectedModel;
+	    }
+	}
+
 	// Event Listeners
 	function setupEventListeners() {
 	    if (elements.sendButton) elements.sendButton.addEventListener('click', sendMessage);
@@ -301,6 +358,7 @@
 	        });
 	    }
 
+	    // Model selector change handler (preserve existing behavior)
 	    if (elements.modelSelect) {
 	        elements.modelSelect.addEventListener('change', (e) => {
 	            selectedModel = e.target.value;
@@ -356,6 +414,8 @@
 	// Initialize
 	function init() {
 	    log('Initializing chat panel...');
+	    // Ensure model selector is populated with the expanded list
+	    populateModelOptions();
 	    setupEventListeners();
 	    // Ask extension for workspace file list
 	    vscode.postMessage({ command: 'getWorkspaceFiles' });

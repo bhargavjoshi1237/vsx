@@ -48,6 +48,49 @@ function getChatPanelHTML() {
             --radius-lg: 12px;
             --radius-xl: 16px;
         }
+              .model-dropdown {
+            /* --- Styles to make the div scrollable --- */
+            max-height: 500px; /* Set the maximum height */
+            overflow-y: auto;  /* Add a vertical scrollbar only when needed */
+            /* --- End of scrollable styles --- */
+
+            width: 400px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            background-color: #fff;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        .model-option {
+            padding: 12px 15px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+        }
+
+        .model-option:last-child {
+            border-bottom: none;
+        }
+
+        .model-option:hover {
+            background-color: #f7f7f7;
+        }
+
+        .model-option.selected {
+            background-color: #e7f0ff;
+            border-left: 3px solid #0056b3;
+        }
+
+        .model-name {
+            font-weight: bold;
+            font-size: 1em;
+            color: #333;
+        }
+
+        .model-description {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 4px;
+        }
 
         * {
             margin: 0;
@@ -1059,28 +1102,79 @@ function getChatPanelHTML() {
                                 <span id="selectedModel">Gemini 2.0 Flash Exp</span>
                                 <span>▼</span>
                             </button>
-                            <div class="model-dropdown">
-                                <div class="model-option selected" data-model="gemini-2.0-flash-exp">
-                                    <div class="model-name">Gemini 2.0 Flash Experimental</div>
-                                    <div class="model-description">Latest experimental model with enhanced capabilities</div>
-                                </div>
-                                <div class="model-option" data-model="gemini-2.5-flash">
-                                    <div class="model-name">Gemini 2.5 Flash</div>
-                                    <div class="model-description">High-performance model for complex reasoning</div>
-                                </div>
-                                <div class="model-option" data-model="gemini-2.0-flash">
-                                    <div class="model-name">Gemini 2.0 Flash</div>
-                                    <div class="model-description">Balanced performance and speed</div>
-                                </div>
-                                <div class="model-option" data-model="gemini-2.0-flash-lite">
-                                    <div class="model-name">Gemini 2.0 Flash Lite</div>
-                                    <div class="model-description">Lightweight version for faster responses</div>
-                                </div>
-                                <div class="model-option" data-model="gemini-2.5-flash-lite">
-                                    <div class="model-name">Gemini 2.5 Flash Lite</div>
-                                    <div class="model-description">Optimized for speed and efficiency</div>
-                                </div>
-                            </div>
+                        <div class="model-dropdown">
+    <!-- Gemini Models -->
+    <div class="model-option selected" data-model="gemini-2.0-flash-exp">
+        <div class="model-name">Gemini 2.0 Flash Exp</div>
+        <div class="model-description">Latest experimental model with enhanced capabilities</div>
+    </div>
+    <div class="model-option" data-model="gemini-2.5-flash">
+        <div class="model-name">Gemini 2.5 Flash</div>
+        <div class="model-description">High-performance model for complex reasoning</div>
+    </div>
+    <div class="model-option" data-model="gemini-2.0-flash">
+        <div class="model-name">Gemini 2.0 Flash</div>
+        <div class="model-description">Balanced performance and speed</div>
+    </div>
+    <div class="model-option" data-model="gemini-2.0-flash-lite">
+        <div class="model-name">Gemini 2.0 Flash Lite</div>
+        <div class="model-description">Lightweight version for faster responses</div>
+    </div>
+    <div class="model-option" data-model="gemini-2.5-flash-lite">
+        <div class="model-name">Gemini 2.5 Flash Lite</div>
+        <div class="model-description">Optimized for speed and efficiency</div>
+    </div>
+
+    <!-- Cerebras -->
+    <div class="model-option" data-model="cerebras-gpt-oss-120b">
+        <div class="model-name">Cerebras GPT-OSS-120B</div>
+        <div class="model-description">Large open model (requires Cerebras API key)</div>
+    </div>
+
+    <!-- Qwen models -->
+    <div class="model-option" data-model="qwen-3-235b-a22b-instruct-2507">
+        <div class="model-name">Qwen-3-235B Instruct</div>
+        <div class="model-description">Instruct model (requires Cerebras API key)</div>
+    </div>
+    <div class="model-option" data-model="qwen-3-235b-a22b-thinking-2507">
+        <div class="model-name">Qwen-3-235B Thinking</div>
+        <div class="model-description">Thinking variant (requires Cerebras API key)</div>
+    </div>
+    <div class="model-option" data-model="qwen-3-32b">
+        <div class="model-name">Qwen-3-32B</div>
+        <div class="model-description">Medium model (requires Cerebras API key)</div>
+    </div>
+    <div class="model-option" data-model="qwen-3-coder-480b">
+        <div class="model-name">Qwen-3-Coder-480B</div>
+        <div class="model-description">Coder model for coding tasks (requires Cerebras API key)</div>
+    </div>
+
+    <!-- NVIDIA Models -->
+    <div class="model-option" data-model="deepseek-ai/deepseek-v3.1">
+        <div class="model-name">NVIDIA DeepSeek v3.1</div>
+        <div class="model-description">DeepSeek model via NVIDIA (requires NVIDIA API key)</div>
+    </div>
+    <div class="model-option" data-model="openai/gpt-oss-20b">
+        <div class="model-name">NVIDIA OpenAI GPT-OSS-20B</div>
+        <div class="model-description">OpenAI's 20B model via NVIDIA (requires NVIDIA API key)</div>
+    </div>
+    <div class="model-option" data-model="openai/gpt-oss-120b">
+        <div class="model-name">NVIDIA OpenAI GPT-OSS-120B</div>
+        <div class="model-description">OpenAI's 120B model via NVIDIA (requires NVIDIA API key)</div>
+    </div>
+    <div class="model-option" data-model="nvidia/llama-3.3-nemotron-super-49b-v1.5">
+        <div class="model-name">NVIDIA Llama-3.3 Nemotron 49B</div>
+        <div class="model-description">Nemotron Super 49B model (requires NVIDIA API key)</div>
+    </div>
+    <div class="model-option" data-model="moonshotai/kimi-k2-instruct">
+        <div class="model-name">NVIDIA MoonshotAI Kimi-K2</div>
+        <div class="model-description">Kimi-K2-Instruct model via NVIDIA (requires NVIDIA API key)</div>
+    </div>
+    <div class="model-option" data-model="deepseek-ai/deepseek-r1-0528">
+        <div class="model-name">NVIDIA DeepSeek R1-0528</div>
+        <div class="model-description">DeepSeek R1 model via NVIDIA (requires NVIDIA API key)</div>
+    </div>
+</div>
                         </div>
                         <span class="model-shortcut">Pick Model (Ctrl+Alt+.)</span>
                     </div>
