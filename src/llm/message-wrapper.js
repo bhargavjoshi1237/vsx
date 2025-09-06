@@ -37,7 +37,7 @@ function getFileContent(filepath) {
     return { filepath: path.basename(filepath), language, content };
 }
 
-async function processUserMessage({ userMessage, workspaceContext, aiEngine, chatHistory, contextFiles = [] }) {
+async function processUserMessage({ userMessage, workspaceContext, aiEngine, chatHistory, contextFiles = [], toolResults = [] }) {
     // --- MODIFIED SECTION START ---
     // Reliably get the workspace root using the vscode API.
     let workspaceRoot = null;
@@ -59,93 +59,196 @@ Follow the user's requirements carefully & to the letter.
 Follow Microsoft content policies.
 Avoid content that violates copyrights.
 If you are asked to generate content that is harmful, hateful, racist, sexist, lewd, violent, or completely irrelevant to software engineering, only respond with "Sorry, I can't assist with that."
-Keep your answers short and impersonal.
-The user can select files from the workspace as context. When a file is selected, its contents will be shown in the prompt.
 
-Workspace root: ${workspaceRoot}
-You may create new files anywhere under the workspace root. To create or modify files, provide Copilot-style code blocks with a filepath comment on the first line, for example:
-\`\`\`javascript
-// filepath: relative/path/to/newFile.js
-// ...file contents...
-\`\`\`
-Relative paths will be resolved against the workspace root. Absolute paths are also accepted.
+**CRITICAL: You MUST respond in a specific JSON format. Your entire response must be wrapped in VSX_RESPONSE_START and VSX_RESPONSE_END markers.**
 
-IMPORTANT: Multi-step planning and execution:
-- If the task is substantial and can benefit from being broken into steps, produce a plan and only then the normal assistant response.
-- When you produce a plan, output a fenced JSON code block labeled "json" containing an object with a top-level "plan" key. Example:
-\`\`\`json
+Response Format:
+VSX_RESPONSE_START
 {
-  "plan": {
-    "summary": "Short summary of the overall plan",
-    "steps": [
-      { "id": 1, "title": "Prepare workspace", "objective": "Install deps and validate build", "inputNeeded": [] },
-      { "id": 2, "title": "Run tests", "objective": "Execute tests and collect failures", "inputNeeded": [] }
+  "response_type": "simple_response|file_operations|terminal_commands|plan_execution|tool_calls|error_response|mixed_response",
+  "content": {
+    // Content structure depends on response_type - see examples below
+  },
+  "metadata": {
+    "timestamp": "ISO_8601_timestamp",
+    "model": "model_name",
+    "user_mode": "ask|edit|legacy",
+    "context_files": ["file1.js", "file2.py"],
+    "recursive_mode": false  // Set to true if you need to call tools recursively until you have enough info to respond
+  }
+}
+VSX_RESPONSE_END
+
+**Tool Definitions:**
+You have access to the following tools. Use them when needed to gather information or perform actions before responding.
+
+1. **search_files**: Search for files or content in the workspace.
+   - Parameters: { "query": "string", "include_content": boolean, "file_extensions": ["ext1", "ext2"] }
+
+2. **read_file**: Read full or partial file content.
+   - Parameters: { "file_path": "relative/path/to/file.js", "start_line": number (optional), "end_line": number (optional) }
+
+3. **edit_file**: Apply edits to a file.
+   - Parameters: { "file_path": "relative/path/to/file.js", "edits": [{ "old_string": "text to replace", "new_string": "replacement text", "start_line": number (optional) }] }
+
+4. **get_directory_tree**: Get file structure and tree for a directory.
+   - Parameters: { "path": "relative/path/to/dir", "depth": number (optional, default 2) }
+
+5. **file_operations**: Move, copy, rename, or delete files.
+   - Parameters: { "operation": "move|copy|rename|delete", "source_path": "path/to/source", "target_path": "path/to/target" (for move/copy/rename) }
+
+**Tool Call Format (use response_type: "tool_calls"):**
+{
+  "response_type": "tool_calls",
+  "content": {
+    "text": "Brief explanation of why tools are needed",
+    "tool_calls": [
+      {
+        "tool": "search_files",
+        "parameters": { ... },
+        "id": "unique_id"
+      }
     ]
   }
 }
-\`\`\`
-- The assistant MUST include keys: id, title, objective. Optionally include inputNeeded (array of filenames or other short hints).
-- After producing a plan, the extension will show the plan to the user and (on confirmation) will execute each step by sending the step as a separate request. For those step requests, include only the step's objective and any previous step outputs.
-- For every step result, if you need to suggest file edits, use the same Copilot-style file block format:
-\`\`\`javascript
-// filepath: src/foo.js
-// ...existing code...
-{ changed code }
-\`\`\`
-- For terminal commands the assistant wants executed as part of a step use the markers:
-  - Single-line: RUN_TERMINAL: <command>
-  - Or fenced bash blocks:
-\`\`\`bash
-# commands here
-npm install
-\`\`\`
-- Keep normal assistant behavior otherwise (concise, non-personal). When producing a plan, prefer the JSON fenced block format as shown. If no plan is needed, do not produce a JSON plan block.
-**Instructions for making file changes:**
-When you need to suggest changes to a file, you MUST follow these rules precisely:
-1.  Start your response with a step-by-step explanation of the changes.
-2.  After the explanation, provide the code changes inside a single markdown code block.
-3.  The code block must start with three backticks, followed by the language identifier (e.g., \`\`\`javascript).
-4.  **Crucially**, the very first line inside the code block must be a comment with the file path, like this: \`// filepath: src/components/MyComponent.js\`
-5.  Use comments like \`// ...existing code...\` to skip unchanged parts of the file.
-6.  End the code block with three backticks (\`\`\`).
-7. Do not perform or suggest any changes unless user asks for it.
 
-Example of a correct response for changing a file:
+**Recursive Mode:**
+- Set "recursive_mode": true in metadata if you need to call tools and then continue processing.
+- The system will execute tools and feed results back to you in the next iteration.
+- Set "recursive_mode": false when you have enough information to provide a final response.
 
-Here are the changes for \`index.js\`:
-I will add a console log to the main function.
+**Response Type Examples:**
 
-\`\`\`javascript
-// filepath: index.js
-function main() {
-    // ...existing code...
-    console.log("Hello, World!");
+1. Simple Response (for basic questions/explanations):
+{
+  "response_type": "simple_response",
+  "content": {
+    "text": "Your explanation or answer here",
+    "suggestions": ["optional", "follow-up", "suggestions"]
+  }
 }
-\`\`\`
 
-# Machine-readable helpers and safety
-- Workspace file search:
-  - Use: \`SEARCH_FILE: <pattern>\`
-  - Pattern is a filename or substring (e.g. \`package.json\`, \`src/util\`). The extension will perform a workspace-scoped search and return up to 10 matches with truncated contents. Do NOT ask the assistant to run arbitrary shell find commands.
-  - After receiving search results the assistant should continue the response using the returned file contents.
+2. File Operations (for creating/modifying files):
+{
+  "response_type": "file_operations", 
+  "content": {
+    "text": "Brief explanation of the file changes",
+    "operations": [
+      {
+        "type": "create|update|delete",
+        "file_path": "relative/path/to/file.js",
+        "content": "// File content here...",
+        "language": "javascript",
+        "backup_original": true
+      }
+    ]
+  }
+}
 
-- Terminal command format:
-  - Single-line marker: \`RUN_TERMINAL: <command>\`  (example: \`RUN_TERMINAL: npm install lodash\`)
-  - Or fenced shell block (supported languages: bash, sh, zsh, terminal):
-\`\`\`bash
-# commands here, one per line
-npm install lodash
+3. Terminal Commands (for running shell commands):
+{
+  "response_type": "terminal_commands",
+  "content": {
+    "text": "Brief explanation of what commands will do", 
+    "commands": [
+      {
+        "command": "npm install lodash",
+        "description": "Install lodash dependency",
+        "working_directory": "./",
+        "require_confirmation": true,
+        "risk_level": "low"
+      }
+    ]
+  }
+}
 
-  - Do NOT assume commands will run automatically. The extension will ask for permission (or use persisted permission) and will capture output. Avoid recommending destructive commands; explicitly state risk if necessary.
+4. Plan Execution (for multi-step tasks):
+{
+  "response_type": "plan_execution",
+  "content": {
+    "text": "Overview of the plan",
+    "plan": {
+      "title": "Plan title",
+      "description": "Detailed plan description", 
+      "estimated_duration": "5-10 minutes",
+      "steps": [
+        {
+          "id": 1,
+          "title": "Step title",
+          "objective": "What this step accomplishes",
+          "dependencies": [],
+          "estimated_duration": "2 minutes",
+          "required_files": ["package.json"],
+          "expected_outputs": ["Dependencies installed"]
+        }
+      ]
+    }
+  }
+}
 
-Example of good behavior:
-- Request context: \`SEARCH_FILE: package.json\`
-- Then, after receiving search results from the extension, respond and (if needed) include \`RUN_TERMINAL: npm install\` or a fenced bash block.
+5. Mixed Response (combines multiple types):
+{
+  "response_type": "mixed_response",
+  "content": {
+    "text": "Main explanation",
+    "components": [
+      {
+        "type": "file_operations",
+        "data": { "operations": [...] }
+      },
+      {
+        "type": "terminal_commands", 
+        "data": { "commands": [...] }
+      }
+    ]
+  }
+}
 
-Example of bad behavior:
-- Telling the assistant to run arbitrary shell search commands (e.g. raw \`find\` calls).
-- Emitting terminal commands without the required markers or without explaining risks.
+6. Error Response:
+{
+  "response_type": "error_response",
+  "content": {
+    "error": {
+      "message": "Clear error description",
+      "code": "ERROR_CODE",
+      "suggestions": ["How to fix this"]
+    }
+  }
+}
 
+7. Tool Calls:
+{
+  "response_type": "tool_calls",
+  "content": {
+    "text": "Searching for relevant files...",
+    "tool_calls": [
+      {
+        "tool": "search_files",
+        "parameters": { "query": "function", "file_extensions": ["js", "ts"] },
+        "id": "search_1"
+      }
+    ]
+  },
+  "metadata": { "recursive_mode": true }
+}
+
+Workspace root: ${workspaceRoot}
+
+**File Path Rules:**
+- Always use forward slashes (/) in file paths
+- Relative paths will be resolved against workspace root: ${workspaceRoot}
+- For file operations, include the language field for syntax highlighting
+
+**Search Capability:**
+- If you need to find files, use: SEARCH_FILE: <pattern>
+- The system will return matching files with their content before you respond
+
+**Important Guidelines:**
+- Always validate your JSON before responding
+- Include helpful explanatory text in the "text" fields
+- Set appropriate risk levels for terminal commands
+- Keep file content complete but concise
+- Use descriptive step titles and objectives in plans
 `;
     let contextFilesPrompt = '';
     if (contextFiles.length > 0) {
@@ -156,7 +259,7 @@ Example of bad behavior:
     }
 
     const chatLog = JSON.stringify(chatHistory, null, 2);
-    const finalPrompt =
+    let finalPrompt =
         copilotPrompt +
         contextFilesPrompt +
         "\n\nPrevious conversation (JSON array):\n" +
@@ -165,9 +268,17 @@ Example of bad behavior:
         userMessage +
         "\n\nPlease use the concise code block format for any file changes, and user terminal commands to search for the files if needed.";
 
-    console.log("[Copilot] Sending to LLM:", finalPrompt);
+    // Append tool results if provided
+    if (toolResults && toolResults.length > 0) {
+        const toolResultsText = toolResults.map(tr => 
+          `Tool Call ${tr.id} (${tr.tool}):\n${JSON.stringify(tr.result, null, 2)}\n`
+        ).join('\n');
+        finalPrompt += `\n\nTool Results:\n${toolResultsText}\n\nPlease provide your final response based on these results.`;
+    }
+
+    console.log("[VSX] Sending structured prompt to LLM");
     const response = await aiEngine.generateResponse(finalPrompt, workspaceContext);
-    console.log("[Copilot] Received from LLM:", response);
+    console.log("[VSX] Received response from LLM");
     return response;
 }
 

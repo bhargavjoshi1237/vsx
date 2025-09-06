@@ -1218,6 +1218,7 @@ function getChatPanelHTML() {
         const elements = {
             chatInput: document.getElementById('chatInput'),
             sendButton: document.getElementById('sendButton'),
+            // stopButton will be created dynamically during init and stored here
             modelButton: document.getElementById('modelButton'),
             selectedModelSpan: document.getElementById('selectedModel'),
             contextToggle: document.getElementById('contextToggle'),
@@ -1231,6 +1232,24 @@ function getChatPanelHTML() {
             modelDropdown: document.querySelector('.model-dropdown'),
             statusIndicator: document.querySelector('.status-indicator')
         };
+
+        let stopButton = null;
+        let isExecuting = false;
+
+        function setExecutingState(on) {
+            isExecuting = !!on;
+            if (isExecuting) {
+                // disable input and show stop button
+                elements.chatInput.disabled = true;
+                if (elements.sendButton) elements.sendButton.disabled = true;
+                if (stopButton) stopButton.style.display = 'inline-flex';
+            } else {
+                // enable input and hide stop button
+                elements.chatInput.disabled = false;
+                if (elements.sendButton) elements.sendButton.disabled = false;
+                if (stopButton) stopButton.style.display = 'none';
+            }
+        }
 
         // Utility Functions
         function log(message) {
@@ -1364,8 +1383,8 @@ function getChatPanelHTML() {
         }
 
         function sendMessage() {
-            if (!elements.chatInput) return;
-            
+            if (!elements.chatInput || isExecuting) return;
+
             const message = elements.chatInput.value.trim();
             if (!message) return;
 
@@ -1381,6 +1400,9 @@ function getChatPanelHTML() {
             elements.chatInput.value = '';
             elements.chatInput.style.height = 'auto';
             showTyping();
+
+            // Enter executing state and show stop button
+            setExecutingState(true);
         }
 
         // Context Panel Functions
@@ -1532,6 +1554,25 @@ function getChatPanelHTML() {
 
         // Event Listeners
         function setupEventListeners() {
+            // Create Stop button dynamically (hidden by default)
+            if (elements.sendButton) {
+                stopButton = document.createElement('button');
+                stopButton.className = 'send-button';
+                stopButton.title = 'Stop execution';
+                stopButton.style.display = 'none'; // hidden initially
+                stopButton.innerHTML = '■'; // simple square stop icon
+                // Insert stopButton after the send button
+                elements.sendButton.parentNode.insertBefore(stopButton, elements.sendButton.nextSibling);
+
+                stopButton.addEventListener('click', () => {
+                    // Notify extension to stop execution
+                    vscode.postMessage({ command: 'stopExecution' });
+                    // locally reflect that the user requested stop; keep UI responsive
+                    setExecutingState(false);
+                    hideTyping();
+                });
+            }
+
             // Send button
             if (elements.sendButton) {
                 elements.sendButton.addEventListener('click', sendMessage);
@@ -1626,31 +1667,33 @@ function getChatPanelHTML() {
         // Message handler from extension
         function handleVSCodeMessage(event) {
             const message = event.data;
-            
+
             switch (message.command) {
                 case 'addMessage':
                     hideTyping();
                     addMessage(message.message);
+                    // When assistant responded, stop executing state so user can send another prompt
+                    setExecutingState(false);
                     break;
                 case 'clearMessages':
                     clearMessages();
-                    // Also clear in-memory chat history if maintained
-                    // chatHistory = [];
                     break;
                 case 'showTyping':
                     showTyping();
+                    // When extension signals showTyping, enter executing state
+                    setExecutingState(true);
                     break;
                 case 'hideTyping':
                     hideTyping();
+                    // When extension hides typing, exit executing state
+                    setExecutingState(false);
                     break;
                 case 'updateFileList':
-                    // Update availableFiles and render file list in sidebar
                     updateFileList(message.files);
                     renderFileList();
                     break;
                 case 'contextFilesUpdated':
                     log('Context files updated after LLM changes');
-                    // Show visual indication that context was refreshed
                     showContextRefreshIndicator();
                     break;
             }
@@ -1659,15 +1702,15 @@ function getChatPanelHTML() {
         // Initialize
         function init() {
             log('Initializing chat panel...');
-            
+
             setupEventListeners();
-            
+
             // Request workspace files from extension backend
             vscode.postMessage({ command: 'getWorkspaceFiles' });
-            
+
             // Set up message listener
             window.addEventListener('message', handleVSCodeMessage);
-            
+
             log('Chat panel initialized successfully');
         }
 
