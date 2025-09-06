@@ -1003,6 +1003,59 @@ async function handleChatMessage(userMessage, selectedModel, contextFilesList = 
     // decode the LLM response
     let llmContent = await decodeLLMResponse({ response });
 
+    // --- NEW: process SEARCH_FILE requests in the LLM response ---
+    try {
+      const searchPatterns = extractSearchRequestsFromText(llmContent);
+      if (searchPatterns.length > 0) {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        const workspaceRoot = workspaceFolder?.uri.fsPath;
+        
+        if (workspaceRoot) {
+          const readFiles = [];
+          
+          for (const pattern of searchPatterns) {
+            const matches = await searchWorkspaceFiles(pattern, workspaceRoot, 10);
+            
+            // Read the content of found files
+            for (const match of matches) {
+              const content = readFileLimited(match.path);
+              if (content !== null) {
+                readFiles.push({
+                  filePath: match.relPath,
+                  content: content
+                });
+              }
+            }
+          }
+          
+          // Notify in chat about files that were read (file names only)
+          if (readFiles.length > 0) {
+            const fileNames = readFiles.map(f => f.filePath).join(', ');
+            chatPanel.webview.postMessage({
+              command: "addMessage",
+              message: {
+                role: "assistant",
+                content: `📖 Read files: ${fileNames}`,
+                timestamp: new Date().toLocaleTimeString(),
+                metadata: { fileSearch: true }
+              }
+            });
+            
+            // Append file content to the existing LLM response for context
+            let searchContext = "\n\nFile contents found:\n";
+            for (const file of readFiles) {
+              searchContext += `---\nFile: ${file.filePath}\n\`\`\`\n${file.content}\n\`\`\`\n`;
+            }
+            llmContent += searchContext;
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Error processing SEARCH_FILE requests:", err);
+      // Don't break the flow, just log the error
+    }
+    // --- end search file processing ---
+
     // --- NEW: detect a plan in the LLM content and offer to execute
     try {
       const plan = parsePlanFromText(llmContent);
@@ -1151,7 +1204,7 @@ class VscodeApiTreeDataProvider {
 // Extract SEARCH_FILE requests from LLM text, returns array of patterns
 function extractSearchRequestsFromText(text) {
   if (!text || typeof text !== 'string') return [];
-  const regex = /SEARCH_FILE:\s*(.+)/g;
+  const regex = /SEARCH_FILE:\s*([^\s\n]+)/g;
   const patterns = [];
   let m;
   while ((m = regex.exec(text)) !== null) {
