@@ -24,11 +24,13 @@
 	let availableFiles = [];
 	let contextFiles = new Set();
 	let isContextPanelOpen = false;
+	let isProcessing = false; // Track if a request is currently being processed
 
 	// DOM Elements (only query the IDs that exist in the HTML)
 	const elements = {
 	    chatInput: document.getElementById('chatInput'),
 	    sendButton: document.getElementById('sendButton'),
+	    stopButton: document.getElementById('stopButton'),
 	    modeSelect: document.getElementById('modeSelect'),
 	    modelSelect: document.getElementById('modelSelect'),
 	    contextToggle: document.getElementById('contextToggle'),
@@ -52,12 +54,59 @@
 	}
 
 	function formatMessageContent(content) {
+	    // Check if content is JSON
+	    if (isJsonContent(content)) {
+	        return formatJsonContent(content);
+	    }
+
 	    let html = escapeHtml(content);
 	    html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
 	    html = html.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
 	    html = html.replace(/\n\n/g, '<br><br>');
 	    html = html.replace(/\n/g, '<br>');
 	    return html;
+	}
+
+	function isJsonContent(content) {
+	    const trimmed = content.trim();
+	    // Check if content starts and ends with braces or brackets
+	    return (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+	           (trimmed.startsWith('[') && trimmed.endsWith(']')) ||
+	           (trimmed.startsWith('```json') && trimmed.endsWith('```'));
+	}
+
+	function formatJsonContent(content) {
+	    try {
+	        let jsonText = content.trim();
+
+	        // Remove markdown code block markers if present
+	        if (jsonText.startsWith('```json')) {
+	            jsonText = jsonText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+	        }
+
+	        const parsed = JSON.parse(jsonText);
+	        const formatted = JSON.stringify(parsed, null, 2);
+
+	        // Create a collapsible JSON viewer
+	        return `
+	            <div class="json-container">
+	                <div class="json-header">
+	                    <span class="json-toggle" onclick="toggleJsonView(this)">▶</span>
+	                    <span class="json-label">JSON Response</span>
+	                    <button class="json-copy-btn" onclick="copyJsonContent('${escapeHtml(JSON.stringify(parsed))}')">Copy</button>
+	                </div>
+	                <pre class="json-content collapsed"><code class="language-json">${escapeHtml(formatted)}</code></pre>
+	            </div>
+	        `;
+	    } catch (e) {
+	        // If JSON parsing fails, fall back to regular formatting
+	        let html = escapeHtml(content);
+	        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+	        html = html.replace(/\`([^\`]+)\`/g, '<code>$1</code>');
+	        html = html.replace(/\n\n/g, '<br><br>');
+	        html = html.replace(/\n/g, '<br>');
+	        return html;
+	    }
 	}
 
 	function createMetadataHTML(metadata) {
@@ -161,28 +210,64 @@
 	function hideTyping() {
 	    if (elements.statusIndicator) elements.statusIndicator.className = 'status-indicator';
 	    if (elements.typingIndicator) elements.typingIndicator.classList.remove('show');
+	    // Reset processing state when typing is hidden
+	    setProcessingState(false);
 	}
 
-	function sendMessage() {
-	    if (!elements.chatInput) return;
-	    const messageText = elements.chatInput.value.trim();
-	    if (!messageText) return;
+        function sendMessage() {
+            if (!elements.chatInput) return;
+            const messageText = elements.chatInput.value.trim();
+            if (!messageText) return;
 
-	    // Local echo
-	    addMessage({ role: 'user', content: messageText });
+            // Set processing state
+            setProcessingState(true);
 
-	    // Send to extension backend
+            // Local echo
+            addMessage({ role: 'user', content: messageText });
+
+            // Send to extension backend
+            vscode.postMessage({
+                command: 'sendMessage',
+                message: messageText,
+                model: selectedModel,
+                mode: selectedMode,
+                contextFiles: Array.from(contextFiles)
+            });
+
+            elements.chatInput.value = '';
+            elements.chatInput.style.height = 'auto';
+            showTyping();
+        	}
+
+	function stopMessage() {
+	    // Send stop command to extension
 	    vscode.postMessage({
-	        command: 'sendMessage',
-	        message: messageText,
-	        model: selectedModel,
-	        mode: selectedMode,
-	        contextFiles: Array.from(contextFiles)
+	        command: 'stopMessage'
 	    });
 
-	    elements.chatInput.value = '';
-	    elements.chatInput.style.height = 'auto';
-	    showTyping();
+	    // Reset processing state
+	    setProcessingState(false);
+	    hideTyping();
+	}
+
+	function setProcessingState(processing) {
+	    isProcessing = processing;
+
+	    if (elements.sendButton && elements.stopButton) {
+	        if (processing) {
+	            // Show stop button, hide send button
+	            elements.sendButton.style.display = 'none';
+	            elements.stopButton.style.display = 'flex';
+	            elements.chatInput.disabled = true;
+	            elements.chatInput.placeholder = 'Processing...';
+	        } else {
+	            // Show send button, hide stop button
+	            elements.sendButton.style.display = 'flex';
+	            elements.stopButton.style.display = 'none';
+	            elements.chatInput.disabled = false;
+	            elements.chatInput.placeholder = 'Ask me anything about your code...';
+	        }
+	    }
 	}
 
 	// Context Panel Functions
@@ -337,6 +422,7 @@
 	// Event Listeners
 	function setupEventListeners() {
 	    if (elements.sendButton) elements.sendButton.addEventListener('click', sendMessage);
+	    if (elements.stopButton) elements.stopButton.addEventListener('click', stopMessage);
 
 	    if (elements.chatInput) {
 	        elements.chatInput.addEventListener('input', autoResizeInput);
@@ -388,14 +474,17 @@
 	    switch (message.command) {
 	        case 'addMessage':
 	            hideTyping();
+	            setProcessingState(false); // Ensure processing state is reset
 	            if (message.message) addMessage(message.message);
 	            break;
 	        case 'clearMessages':
 	            hideTyping();
+	            setProcessingState(false);
 	            clearMessages();
 	            break;
 	        case 'showTyping':
 	            showTyping();
+	            setProcessingState(true);
 	            break;
 	        case 'hideTyping':
 	            hideTyping();
@@ -410,6 +499,38 @@
 	            log('Unknown command from extension: ' + message.command);
 	    }
 	}
+
+	// Global functions for JSON handling
+	window.toggleJsonView = function(toggleElement) {
+	    const jsonContent = toggleElement.closest('.json-container').querySelector('.json-content');
+	    const isCollapsed = jsonContent.classList.contains('collapsed');
+
+	    if (isCollapsed) {
+	        jsonContent.classList.remove('collapsed');
+	        toggleElement.classList.add('expanded');
+	        toggleElement.textContent = '▼';
+	    } else {
+	        jsonContent.classList.add('collapsed');
+	        toggleElement.classList.remove('expanded');
+	        toggleElement.textContent = '▶';
+	    }
+	};
+
+	window.copyJsonContent = function(jsonString) {
+	    navigator.clipboard.writeText(JSON.parse(jsonString)).then(() => {
+	        // Show temporary success feedback
+	        const btn = event.target;
+	        const originalText = btn.textContent;
+	        btn.textContent = 'Copied!';
+	        btn.style.background = 'var(--accent-success)';
+	        setTimeout(() => {
+	            btn.textContent = originalText;
+	            btn.style.background = 'var(--accent-primary)';
+	        }, 2000);
+	    }).catch(err => {
+	        console.error('Failed to copy JSON:', err);
+	    });
+	};
 
 	// Initialize
 	function init() {
